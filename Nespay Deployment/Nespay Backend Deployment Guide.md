@@ -154,8 +154,10 @@ EMAIL_APP_NAME=Nespay
 EMAIL_SUPPORT_EMAIL=support@yourdomain.com
 
 # AWS SES configuration
-AWS_REGION=us-east-1
+AWS_REGION=ap-southeast-3   # region: indonesia - jakarta
 AWS_SES_FROM_EMAIL=noreply@yourdomain.com
+AWS_ACCESS_KEY_ID=secret-string
+AWS_SECRET_ACCESS_KEY=secret-string
 
 # ============================================
 # BACKGROUND JOBS
