@@ -1,0 +1,124 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// Discover Docker containers for log collection
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+
+  // Refresh interval for container discovery
+  refresh_interval = "5s"
+}
+
+// Collect logs from Docker containers
+loki.source.docker "docker_logs" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.docker.containers.targets
+  forward_to       = [loki.process.docker_logs.receiver]
+
+  refresh_interval = "5s"
+
+  labels = {
+    job = "docker-logs",
+    agent = "alloy",
+  }
+}
+
+loki.process "docker_logs" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.json {
+    expressions = {
+      output = "log",
+      stream = "stream",
+    }
+  }
+
+  stage.drop {
+    expression = ".*healthcheck.*"
+  }
+
+  stage.drop {
+    expression = ".*GET /ready.*"
+  }
+
+  stage.drop {
+    expression = ".*GET /health.*"
+  }
+
+  stage.drop {
+    expression = ".*DEBUG.*"
+  }
+
+  stage.match {
+    selector = "{job=\"docker-logs\"}"
+    // Keep ERROR, WARN, INFO, FATAL level logs
+    stage.regex {
+      expression = ".*(?i)(error|err|warn|warning|info|fatal|exception|fail|denied).*"
+    }
+    action = "keep"
+  }
+
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339"
+  }
+}
+
+// Perform Write logs to Loki
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+
+  external_labels = {
+    cluster = "nespay",
+    env     = "production",
+  }
+}
+
+// Scrape VictoriaMetrics self-metrics and send back to itself
+prometheus.scrape "victoria_metrics_self" {
+  targets = [
+    {
+      __address__ = "victoria-metrics:8428",
+      __metrics_path__ = "/metrics",
+    },
+  ]
+
+  forward_to = [prometheus.remote_write.metrics.receiver]
+
+  scrape_interval = "30s"
+  metrics_path    = "/metrics"
+
+}
+
+// Optional: Prometheus metrics endpoint for monitoring Alloy itself
+prometheus.exporter.self "alloy_metrics" {
+}
+
+prometheus.scrape "alloy_metrics" {
+  targets    = prometheus.exporter.self.alloy_metrics.targets
+  forward_to = [prometheus.remote_write.metrics.receiver]
+
+  scrape_interval = "30s"
+  metrics_path    = "/metrics"
+}
+
+// Optional: Send Alloy metrics to VictoriaMetrics (if available)
+prometheus.remote_write "metrics" {
+  endpoint {
+    url = "http://victoria-metrics:8428/api/v1/write"
+
+    queue_config {
+      max_samples_per_send = 1000
+      batch_send_deadline  = "5s"
+    }
+  }
+
+  external_labels = {
+    instance = "alloy",
+    job      = "alloy-self-monitoring",
+  }
+}
