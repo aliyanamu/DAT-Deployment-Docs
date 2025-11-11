@@ -6,7 +6,6 @@ tags:
   - system-administration
 ---
 
-
 # Nespay Backend Deployment Guide
 
 ## Overview
@@ -17,223 +16,187 @@ Nespay Backend is a cryptocurrency payment platform running as three microservic
 - **Webhook Service** (port 8001): External payment provider callbacks
 - **Job Service** (port 8002): Background processing and scheduled tasks
 
-All services run on Node.js 20+ with NestJS, connecting to PostgreSQL, Redis, and RabbitMQ.
+All services run on Node.js 20+ with NestJS, connecting to PostgreSQL, and Redis.
+
 ## Prerequisites
 
-**Required:**
+### Infrastructure Requirements
+
+For server infrastructure setup (PostgreSQL, Redis, Grafana stack), refer to `server-setup.md`.
+
+### Required Software
 - Docker 20.10+
 - Docker Compose 2.0+
-- PostgreSQL 17+ with `pg_trgm` extension
 - At least 2GB free RAM
 
-**Recommended:**
-- Redis 6+ (standalone, cluster, or sentinel)
-- RabbitMQ 3.11+ (for invoice callbacks)
-
-**External Services:**
-You'll need API credentials for any features you want to use:
-- AWS Cognito (authentication)
-- Rain Cards (card issuance)
+### Required External Services
+You'll need API credentials for:
+- **AWS Cognito** - User and admin authentication
+- **Privy.io** - Wallet management and MPC services
+- **Rain Cards** - Card issuance (required for card features)
+- **Grafana Loki** - Application log storage (required)
 
 ## Environment Configuration
 
-Create a `.env` file in the project root. Here are the critical variables:
+A `.env.example` file is provided as a template. Copy it to create your environment file:
 
-### Core Configuration
 ```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your actual configuration values. Key variables to configure:
+
+```bash
+# ============================================
+# CORE CONFIGURATION
+# ============================================
 NODE_ENV=production
 API_PORT=8000
 WEBHOOK_PORT=8001
 JOB_PORT=8002
 BASE_URL=https://api.yourdomain.com
-
 PUBLIC_API_PREFIX=api/v1
 INTERNAL_API_PREFIX=api/backoffice/v1
-```
 
-### Database
-```bash
-DATABASE_URL=postgresql://nespay:yourpassword@localhost:5432/nespay?schema=public
-```
+# ============================================
+# DATABASE
+# ============================================
+DATABASE_URL=postgresql://nespay_user:yourpassword@localhost:5432/nespay?schema=public
 
-### Redis
-```bash
-# Core settings
-REDIS_USER=default
-REDIS_PASSWORD=password
+# Database monitoring settings
+DB_MONITORING_ENABLED=true
+DB_MONITORING_LEVEL=ALL
+DB_SLOW_QUERY_THRESHOLD=100
+
+# ============================================
+# REDIS - Optional performance cache
+# Application runs in degraded mode without Redis
+# ============================================
 REDIS_ENABLED=false
+REDIS_USER=default
+REDIS_PASSWORD=yourpassword
 
 # Standalone mode
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=0
 
-# Advanced settings (all optional with sensible defaults)
-REDIS_MAX_RETRIES=3                  # Number of retry attempts before fallback
-REDIS_RETRY_DELAY=100                # Base delay between retries (ms)
-REDIS_MAX_RETRY_DELAY=2000           # Maximum retry delay (ms)
-REDIS_READY_CHECK=true               # Enable ready check
-REDIS_OFFLINE_QUEUE=false            # Queue commands when disconnected
-REDIS_LAZY_CONNECT=false              # Connect on first command
-```
-
-For cluster mode:
-```bash
-REDIS_CLUSTER_ENABLED=false
-REDIS_SENTINEL_ENABLED=true
+# Advanced settings (optional, sensible defaults provided)
+REDIS_MAX_RETRIES=3
+REDIS_RETRY_DELAY=100
+REDIS_MAX_RETRY_DELAY=2000
+REDIS_READY_CHECK=true
+REDIS_OFFLINE_QUEUE=false
+REDIS_LAZY_CONNECT=false
 
 # Cluster mode
+REDIS_CLUSTER_ENABLED=false
 REDIS_CLUSTER_NODES=localhost:7001,localhost:7002,localhost:7003
 REDIS_CLUSTER_NAT_MAP=redis-node-1:7001=>localhost:7001,redis-node-2:7002=>localhost:7002,redis-node-3:7003=>localhost:7003
 
 # Sentinel mode
+REDIS_SENTINEL_ENABLED=false
 REDIS_SENTINEL_NAME=mymaster
 REDIS_SENTINEL_NODES=localhost:26379,localhost:26380,localhost:26381
 REDIS_SENTINEL_NAT_MAP=redis-master:6379=>localhost:6379
 
-```
+# ============================================
+# AWS COGNITO - Authentication (Required)
+# ============================================
+COGNITO_USER_POOL_ID=us-east-1_XXXXXXXXX
+COGNITO_USER_CLIENT_ID=xxxxxxxxxxxxxxxxxxxx
+COGNITO_ADMIN_POOL_ID=us-east-1_XXXXXXXXX
+COGNITO_ADMIN_CLIENT_ID=xxxxxxxxxxxxxxxxxxxx
 
-### RabbitMQ (Required for Invoice Callbacks)
-```bash
-RABBITMQ_URL=amqp://nespay:yourpassword@localhost:5672
-```
+# ============================================
+# PRIVY - Wallet Management (Required)
+# ============================================
+PRIVY_APP_ID=your-app-id
+PRIVY_APP_SECRET=your-app-secret
+PRIVY_API=https://auth.privy.io
 
-### Authentication
+# ============================================
+# RAIN CARDS - Card Issuance (Required for card features)
+# ============================================
+RAIN_API_URL=https://api.raincards.xyz
+RAIN_API_KEY=your-rain-api-key
+CARD_ADMIN_EVM_WALLET_ADDRESS=0x...
 
-**AWS Cognito:**
-```bash
-COGNITO_USER_POOL_ID=us-east-1_...
-COGNITO_USER_CLIENT_ID=...
-COGNITO_ADMIN_POOL_ID=us-east-1_...
-COGNITO_ADMIN_CLIENT_ID=...
-```
-
-**Privy (Wallet Management):**
-```bash
-PRIVY_APP_ID=...
-PRIVY_APP_SECRET=...
-```
-
-### Security
-```bash
+# ============================================
+# SECURITY
+# ============================================
 # Generate with: openssl rand -hex 64
 ENCRYPTION_MASTER_KEY=your-64-byte-hex-key
 
-# Webhook validation
+# Webhook IP validation
 WEBHOOK_ENABLE_IP_VALIDATION=true
 WEBHOOK_ENABLE_SIGNATURE_VALIDATION=true
-```
+WEBHOOK_ALLOWED_IPS=
+WEBHOOK_RAIN_ALLOWED_IPS=34.67.3.60,34.66.230.233
 
-### External Services (Optional)
-```bash
-# Rain Cards
-RAIN_API_URL=https://api.raincards.xyz
-RAIN_API_KEY=...
-
-# Email
-EMAIL_SUPPORT_EMAIL=support@yourdomain.com
-```
-
-### Monitoring (Optional)
-
-`OTLP_LOGS_ENDPOINT` value is where `Grafana Alloy` is located.
-
-```bash
-## OpenTelemetry 
+# ============================================
+# OBSERVABILITY - Logs and Monitoring (Required)
+# OTLP_LOGS_ENDPOINT points to Grafana Alloy instance
+# ============================================
 OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
 SERVICE_NAME=nespay-backend
+SERVICE_VERSION=1.0.0
 ENVIRONMENT=production
+CLUSTER_NAME=production
 
-# Loki
+# Loki for log storage (required)
 LOKI_URL=http://localhost:3100
+
+# ============================================
+# EMAIL - Transactional emails
+# ============================================
+EMAIL_APP_NAME=Nespay
+EMAIL_SUPPORT_EMAIL=support@yourdomain.com
+
+# AWS SES configuration
+AWS_REGION=us-east-1
+AWS_SES_FROM_EMAIL=noreply@yourdomain.com
+
+# ============================================
+# BACKGROUND JOBS
+# ============================================
+CONSOLIDATION_JOB_ENABLED=false
+CONSOLIDATION_JOB_SCHEDULE="0 */6 * * *"
+CONSOLIDATION_JOB_MAX_CONCURRENT=3
+CONSOLIDATION_JOB_TIMEOUT_MS=300000
+
+# ============================================
+# OPTIONAL FEATURES
+# ============================================
+SWAGGER_ENABLE=1
+ENABLE_CORS_URLS=
+HEALTH_TOKEN=
+APP_SCHEME=nespay
 ```
 
-## Database Setup
+## Build and Deploy
 
-### 1. Install PostgreSQL Extension
+### Prerequisites
 
-Connect to your database and run:
-```sql
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-```
+Ensure infrastructure services are running (see `server-setup.md`):
+- PostgreSQL 17 with `nespay` database and `pg_trgm` extension
+- Redis (optional but recommended for performance)
 
-This extension is required for full-text search functionality.
+### Using Docker Compose
 
-### 2. Create Database
-```bash
-createdb nespay
-```
-
-Or via SQL:
-```sql
-CREATE DATABASE nespay OWNER nespay;
-```
-
-## Build Instructions
-
-### Method 1: Docker Compose (Recommended)
-
-The `docker-compose.yml` includes backend, webhook, and database services.
+The `docker-compose.yml` deploys only the application services (backend, webhook, jobs). Infrastructure dependencies (PostgreSQL, Redis) must be installed separately on the host system.
 
 ```bash
 # Build all services
 docker-compose build
 
-# Start services
+# Start services in background
 docker-compose up -d
 
 # View logs
 docker-compose logs -f
-```
 
-### Method 2: Manual Docker Build
-
-```bash
-# Build main application image
-docker build -t nespay-backend:latest .
-```
-
-### Method 3: Local Build (No Docker)
-
-Requires pnpm 9.15.2+:
-
-```bash
-# Enable pnpm
-corepack enable pnpm
-
-# Install dependencies
-pnpm install
-
-# Generate Prisma client
-pnpm prisma:generate
-
-# Build TypeScript
-pnpm build
-```
-
-## Running Database Migrations
-
-**Before first run**, apply database migrations:
-
-### Run the migration
-```bash
-npx prisma migrate deploy
-```
-
-### Seed Initial Data
-```bash
-# Seeds blockchain networks, currencies, and RPC endpoints
-pnpm prisma:seed:prod
-```
-
-## Running Services
-
-### Using Docker Compose
-```bash
-# Start all services
-docker-compose up -d
-
-# Check status
+# Check service status
 docker-compose ps
 
 # Stop services
@@ -243,53 +206,28 @@ docker-compose down
 Services will be available at:
 - Main API: http://localhost:8000
 - Webhook: http://localhost:8001
+- Job Service: http://localhost:8002
 
-### Using Deployment Scripts
+**Note**: The `.env` file must contain valid connection strings for PostgreSQL, and Redis running on the host or remote servers.
 
-**Development:**
+## Database Migration
+
+**Before first run**, apply database migrations and seed initial data:
+
 ```bash
-chmod +x deploy-dev.sh
-./deploy-dev.sh
+# Run migrations
+docker-compose exec backend npx prisma migrate deploy
+
+# Seed blockchain networks, currencies, and RPC endpoints
+docker-compose exec backend pnpm prisma:seed:prod
 ```
-Starts containers named `nespay-backend-dev` and `nespay-webhook-dev`.
 
-**Staging:**
-```bash
-chmod +x deploy-staging.sh
-./deploy-staging.sh
-```
-Uses ports 8200 (backend) and 8201 (webhook).
-
-### Manual Docker Run
-```bash
-# Main API
-docker run -d \
-  --name nespay-backend \
-  -p 8000:8000 \
-  --env-file .env \
-  nespay-backend:latest \
-  node dist/src/main.js
-
-# Webhook Service
-docker run -d \
-  --name nespay-webhook \
-  -p 8001:8001 \
-  --env-file .env \
-  nespay-backend:latest \
-  node dist/src/webhook-main.js
-
-# Job Service
-docker run -d \
-  --name nespay-jobs \
-  -p 8002:8002 \
-  --env-file .env \
-  nespay-backend:latest \
-  node dist/src/job-main.js
-```
+**Note**: Migrations must be run after the backend service is built and running.
 
 ## Service Verification
 
 ### Health Checks
+
 ```bash
 # Main API
 curl http://localhost:8000/api/v1/health
@@ -312,19 +250,25 @@ Expected response:
 }
 ```
 
-### Check Logs
+### View Logs
+
 ```bash
-# Docker Compose
+# Docker Compose - all services
+docker-compose logs -f
+
+# Specific service
 docker-compose logs -f backend
+docker-compose logs -f webhook
+docker-compose logs -f jobs
 
 # Individual container
 docker logs -f nespay-backend
 ```
 
 ### Verify Database Connection
+
 ```bash
-# Check Prisma can connect
-docker exec -it nespay-backend pnpm prisma db pull
+docker-compose exec backend pnpm prisma db pull
 ```
 
 ## Port Reference
@@ -336,42 +280,63 @@ docker exec -it nespay-backend pnpm prisma db pull
 | Jobs        | 8002  | Background processing       |
 | PostgreSQL  | 5432  | Database                    |
 | Redis       | 6379  | Cache                       |
-| RabbitMQ    | 5672  | Message queue               |
-| RabbitMQ UI | 15672 | Management interface        |
+| Loki        | 3100  | Log aggregation             |
+| Alloy       | 4318  | OTLP receiver               |
 
 ## Troubleshooting
 
 ### Port Already in Use
+
 ```bash
 # Find process using port 8000
 lsof -i :8000
 
-# Kill it
+# Kill process
 kill -9 <PID>
 ```
 
 ### Database Connection Failed
-Check your `DATABASE_URL` format:
+
+Verify `DATABASE_URL` format:
 ```bash
 postgresql://username:password@host:port/database?schema=public
 ```
 
-Verify PostgreSQL is running:
+Check PostgreSQL is running:
 ```bash
 docker ps | grep postgres
+# OR if using system PostgreSQL
+sudo systemctl status postgresql-17
 ```
 
 ### Prisma Client Not Found
-Regenerate the Prisma client:
+
+Regenerate Prisma client:
 ```bash
-pnpm prisma:generate
-pnpm build
+docker-compose exec backend pnpm prisma:generate
+docker-compose restart backend
 ```
 
-### Container Crashes on Startup
-Check environment variables are set:
+### Redis Connection Issues
+
+The application runs without Redis but with degraded performance. Verify Redis status:
+
 ```bash
-docker exec nespay-backend env | grep DATABASE_URL
+# Check Redis is running
+docker ps | grep redis
+# OR
+sudo systemctl status redis
+
+# Test connection
+redis-cli ping  # Should return PONG
+```
+
+
+### Container Crashes on Startup
+
+Check environment variables:
+```bash
+docker-compose exec backend env | grep DATABASE_URL
 ```
 
 View detailed logs:
@@ -380,15 +345,16 @@ docker logs nespay-backend --tail 100
 ```
 
 ### Migration Failures
-Reset and reapply migrations:
+
+Reset and reapply migrations (WARNING: deletes all data):
 ```bash
-# WARNING: Deletes all data
-pnpm prisma:migrate:reset
-pnpm prisma:migrate:deploy
-pnpm prisma:db:seed
+docker-compose exec backend pnpm prisma:migrate:reset
+docker-compose exec backend npx prisma migrate deploy
+docker-compose exec backend pnpm prisma:seed:prod
 ```
 
 ### Build Failures
+
 Clear Docker cache and rebuild:
 ```bash
 docker-compose down
@@ -397,42 +363,41 @@ docker-compose build --no-cache
 docker-compose up -d
 ```
 
+### Logs Not Appearing in Loki
+
+Verify Grafana Alloy is running and accessible:
+```bash
+curl http://localhost:4318/v1/logs
+```
+
+Check `OTLP_LOGS_ENDPOINT` in `.env` points to Alloy instance.
+
 ## Security Considerations
 
-**Production Checklist:**
-- [ ] Change all default passwords
-- [ ] Use secrets management (not .env in image)
-- [ ] Enable webhook IP validation
-- [ ] Use HTTPS for all external endpoints
-- [ ] Rotate `ENCRYPTION_MASTER_KEY` regularly
-- [ ] Enable Redis authentication
-- [ ] Restrict database access by IP
-- [ ] Set up proper firewall rules
-- [ ] Enable audit logging
-- [ ] Configure rate limiting
+### Environment Variables in Docker
 
-**Environment Variables in Docker:**
-The current Dockerfile copies `.env` into the image. For production, use:
-- Docker secrets
-- Kubernetes secrets
-- AWS Parameter Store
-- HashiCorp Vault
+The current Dockerfile copies `.env` into the image. For production:
+- Use Docker secrets
+- Use AWS Secrets Manager
+- Use Kubernetes secrets
+- Use environment variables injected at runtime
 
-**Webhook Security:**
-Configure allowed IPs for each provider:
+### Webhook Security
+
+Configure allowed IPs for each provider in `.env`:
 ```bash
 WEBHOOK_RAIN_ALLOWED_IPS=34.67.3.60,34.66.230.233
 WEBHOOK_INTRAJASA_TOKEN=your-shared-secret
 ```
 
-## Next Steps
+Enable signature validation:
+```bash
+WEBHOOK_ENABLE_IP_VALIDATION=true
+WEBHOOK_ENABLE_SIGNATURE_VALIDATION=true
+```
 
-1. Configure external service credentials
-2. Set up monitoring and alerting
-3. Configure backup strategy for PostgreSQL
-4. Set up reverse proxy (nginx/Traefik)
-5. Configure SSL certificates
-6. Set up log aggregation
-7. Configure autoscaling (if needed)
+## API Documentation
 
-For development commands and detailed configuration, see the project README.
+When `SWAGGER_ENABLE=1`, Swagger UI is available at:
+- http://localhost:8000/api (Main API)
+- http://localhost:8001/api (Webhook service)

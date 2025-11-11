@@ -1,9 +1,3 @@
-`---
-tags:
-  - system-administration
-  - webtiga
-  - nespay
----
 # Nespay
 
 ```table-of-contents
@@ -21,8 +15,6 @@ The Nespay Product consist of multiple service.
 | webhook-service    | Receiving Webhook from third-party services.              | `webhook.domain.tld`  |
 | job-service        | Processing various background jobs, and async tasks.      | `job.domain.tld`      |
 | admin-dashboard    | Frontend service to perform various Administrative tasks. | `desk.domain.tld`     |
-| merchant-dashboard | Frontend service for Merchant interactions.               | `app.domain.tld`      |
-| payment-form       | Frontend service to serve user payment form.              | `checkout.domain.tld` |
 
 # Deployment
 
@@ -70,7 +62,6 @@ Below is a list of required service and dependencies that need to be installed /
 	- AWS Secret Manager: storing sensitive data.
 - Nginx - v1.20, or newer
 - PostgreSQL - v17.x
-- Rabbit MQ - v4.x
 - Redis - v6.x
 - Grafana Loki - latest
 - Grafana Alloy - latest
@@ -116,47 +107,6 @@ Role that need to be created:
 - `grafana` - to be used by Grafana instance, this one can be skipped when Grafana dashboard is deployed using SQLite as database storage.
 
 You may add other roles as needed, such as for monitoring, and database administration process. When possible, always avoid using `postgres` user directly.
-
-#### RabbitMQ
-
-RabbitMQ is used as message queue on the Nespay Product.
-
-Please follows the installation guide from this link: https://www.rabbitmq.com/docs/install-rpm
-
-Once RabbitMQ is up and running healthy, proceed to configure it
-
-1. Create a new dedicated user for Nespay Backend Service.
-2. Create a new `vhost`, then grant permission for user from step 1 to fully access it. 
-3. Configure Exchange, Queue and Routing Key, See detail below, you may change the `vhost name` but retail the others attributes
-- VHost name:  `nespay_production`
-	- Exchange:
-		- Name: `invoice.events`
-			- Type: `topic`
-			- Durable: `durable`
-	- Queue:
-		- Name: `invoice.paid`
-		- Type (a.k.a`x-queue-type`): `classic`
-		- Bindings:
-			- Exchange Name: `invoice.events`
-			- Routing Key Name: `invoice.paid`
-			- See image below for reference
-![[brain-dump/Works/Webtiga/Nespay Deployment/images/rmq-nespay-exchange.png]]
-
-Store the information about the user credentials and `vhost`, we will use this later.
-
-Example:
-
-```sh
-## Pattern
-amqp://username:password@rabbitmq-host:5672/vhost-name
-
-## Example
-amqp://nespay_user:LongAndSecurePassword@rmq.domain.tld:5672/nespay
-```
-
-For production level, it is recommended to use RabbitMQ cluster instead of single instance. 
-
-A sample DNF repo configuration can be found at `./yum-repos/rabbitmq.repo`.
 
 #### Redis
 
@@ -461,8 +411,8 @@ sudo systemctl reload postgresql-17.service
 Configure firewall to allow required services while blocking unnecessary access.
 
 **Firewall Configuration Tips:**
-- Open only necessary ports (HTTP/HTTPS, PostgreSQL, Redis, RabbitMQ)
-- Restrict PostgreSQL, Redis, and RabbitMQ to localhost or specific IPs
+- Open only necessary ports (HTTP/HTTPS, PostgreSQL, Redis)
+- Restrict PostgreSQL, and Redis to localhost or specific IPs
 - Use firewalld for AlmaLinux 9
 - Consider SSH port changes and fail2ban for SSH protection
 - Enable SELinux in enforcing mode with proper policies
@@ -471,8 +421,6 @@ Configure firewall to allow required services while blocking unnecessary access.
 - 80/443: HTTP/HTTPS (Nginx)
 - 5432: PostgreSQL (restrict to localhost or backend containers)
 - 6379: Redis (restrict to localhost)
-- 5672: RabbitMQ AMQP (restrict to localhost)
-- 15672: RabbitMQ Management (restrict to admin IPs or disable)
 - 3100: Loki (restrict to localhost)
 - 4318: Alloy OTLP endpoint (restrict to localhost)
 
@@ -531,7 +479,6 @@ Regular database backups are critical for disaster recovery and data protection.
 - Application configurations
 - SSL certificates
 - Grafana dashboards and datasources
-- RabbitMQ definitions (queues, exchanges, bindings)
 
 **Backup Frequency:**
 - Database: Daily at minimum, more frequently for critical data
@@ -564,7 +511,6 @@ Regular system maintenance ensures optimal performance, security, and reliabilit
 - Track application performance metrics
 - Monitor database query performance
 - Check Redis hit rates and memory usage
-- Monitor RabbitMQ queue depths
 
 **Certificate Management:**
 - Track SSL certificate expiration dates
@@ -594,7 +540,6 @@ After completing the installation, perform these validation steps to ensure ever
   ```sh
   systemctl status postgresql-17
   systemctl status redis
-  systemctl status rabbitmq-server
   systemctl status loki
   systemctl status alloy
   systemctl status grafana-server
@@ -622,7 +567,7 @@ After completing the installation, perform these validation steps to ensure ever
   - `http://localhost:8000/api/v1/health` (Main API)
   - `http://localhost:8001/api/v1/health` (Webhook)
   - `http://localhost:8002/api/v1/health` (Jobs)
-- Verify services can connect to PostgreSQL, Redis, and RabbitMQ
+- Verify services can connect to PostgreSQL, and Redis.
 
 **5. Nginx Reverse Proxy**
 - Test Nginx configuration syntax
