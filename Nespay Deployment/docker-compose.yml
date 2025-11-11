@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # Main API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nespay-backend
+    restart: unless-stopped
+    command: node dist/src/main.js
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    networks:
+      - nespay-network
+
+  # Webhook Service
+  webhook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nespay-webhook
+    restart: unless-stopped
+    command: node dist/src/webhook-main.js
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    networks:
+      - nespay-network
+
+  # Job Service (Background Processing)
+  jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nespay-jobs
+    restart: unless-stopped
+    command: node dist/src/job-main.js
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    networks:
+      - nespay-network
+
+networks:
+  nespay-network:
+    driver: bridge
